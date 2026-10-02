@@ -1,6 +1,9 @@
 name: GridCast Daily Inference Pipeline
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     - cron: '0 23 * * *'
   workflow_dispatch:
