@@ -2,8 +2,8 @@ name: GridCast Daily Inference Pipeline
 
 on:
   schedule:
-    - cron: '0 23 * * *' # اجرا هر روز ساعت ۲۳:۰۰ UTC
-  workflow_dispatch: # دکمه اجرای دستی در گیت‌هاب
+    - cron: '0 23 * * *'
+  workflow_dispatch:
 
 jobs:
   run-pipeline:
@@ -25,7 +25,6 @@ jobs:
 
     - name: Run ML Pipeline
       env:
-        # توکن از بخش Secrets گیت‌هاب خوانده می‌شود
         TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
       run: |
         python pipeline.py
