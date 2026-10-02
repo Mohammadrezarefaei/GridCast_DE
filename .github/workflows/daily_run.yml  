@@ -1,1 +1,31 @@
+name: GridCast Daily Inference Pipeline
 
+on:
+  schedule:
+    - cron: '0 23 * * *' # اجرا هر روز ساعت ۲۳:۰۰ UTC
+  workflow_dispatch: # دکمه اجرای دستی در گیت‌هاب
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run ML Pipeline
+      env:
+        # توکن از بخش Secrets گیت‌هاب خوانده می‌شود
+        TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      run: |
+        python pipeline.py
