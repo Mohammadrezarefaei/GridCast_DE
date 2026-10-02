@@ -39,13 +39,22 @@ df_tomorrow['Price_EUR'] = model_price.predict(X_price)
 
 # 3. Batch Insert to Turso
 TURSO_URL = "libsql://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
-TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN") # فراخوانی امن توکن
+raw_token = os.getenv("TURSO_AUTH_TOKEN")
 
-if not TURSO_AUTH_TOKEN:
-    raise ValueError("TURSO_AUTH_TOKEN environment variable is missing!")
+# === بخش کنترل و پاک‌سازی هوشمند توکن ===
+if not raw_token:
+    raise ValueError("🚨 توکن در گیت‌هاب خالی است! لطفاً مطمئن شوید متغیر در بخش Repository secrets تعریف شده باشد.")
 
+# پاک کردن اسپیس‌های نامرئی و گیومه‌های اشتباهی از اول و آخر توکن
+TURSO_AUTH_TOKEN = raw_token.strip().strip("'").strip('"')
+
+if not TURSO_AUTH_TOKEN.startswith("eyJ"):
+    raise ValueError(f"🚨 توکن نامعتبر است! توکن پیدا شده به جای 'eyJ' با این مقادیر شروع شده: {TURSO_AUTH_TOKEN[:10]}")
+
+# اتصال به دیتابیس
 client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
 
+# آماده‌سازی داده‌ها برای تزریق
 values_placeholders = []
 args_list = []
 for _, row in df_tomorrow.iterrows():
@@ -64,5 +73,6 @@ INSERT INTO daily_forecasts (target_date, hour, load_mw, solar_mw, wind_mw, pric
 VALUES {', '.join(values_placeholders)}
 """
 
+# اجرای کوئری
 client.execute(insert_query, args_list)
-print(f"✅ Prediction for {tomorrow} saved to Turso Cloud!")
+print(f"✅ Prediction for {tomorrow} successfully saved to Turso Cloud!")
