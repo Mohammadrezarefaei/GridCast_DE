@@ -38,7 +38,7 @@ X_price = df_tomorrow[['Load_MW', 'Solar_Gen', 'windspeed_10m', 'hour', 'dayofwe
 df_tomorrow['Price_EUR'] = model_price.predict(X_price)
 
 # 3. Batch Insert to Turso
-TURSO_URL = "libsql://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
+TURSO_URL = "https://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
 raw_token = os.getenv("TURSO_AUTH_TOKEN")
 
 # === بخش کنترل و پاک‌سازی هوشمند توکن ===
