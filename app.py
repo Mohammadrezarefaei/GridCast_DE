@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import libsql_client
 import os
-from datetime import datetime
 
 # تنظیمات صفحه استریملیت
 st.set_page_config(
@@ -11,24 +10,23 @@ st.set_page_config(
     layout="wide"
 )
 
-# اتصال به دیتابیس Turso با پروتکل HTTPS
+# اتصال به دیتابیس Turso
 TURSO_URL = "https://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
 raw_token = os.getenv("TURSO_AUTH_TOKEN")
 
 if not raw_token:
-    # اگر توکن در Secrets گیت‌هاب نبود، می‌توانید به صورت موقت اینجا قرار دهید یا از Secrets استریملیت بخوانید
     TURSO_AUTH_TOKEN = st.secrets.get("TURSO_AUTH_TOKEN", "")
 else:
     TURSO_AUTH_TOKEN = raw_token.strip().strip("'").strip('"')
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=30)
 def load_data():
     if not TURSO_AUTH_TOKEN:
         return pd.DataFrame()
     
-    client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
     try:
-        result = client.execute("SELECT target_date, hour, load_mw, solar_mw, wind_mw, price_eur FROM daily_forecasts ORDER BY target_date DESC, hour ASC")
+        client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
+        result = client.execute("SELECT target_date, hour, load_mw, solar_mw, wind_mw, price_eur FROM daily_forecasts")
         rows = result.rows
         client.close()
         
@@ -36,18 +34,19 @@ def load_data():
             return pd.DataFrame()
             
         df = pd.DataFrame(rows, columns=["target_date", "hour", "load_mw", "solar_mw", "wind_mw", "price_eur"])
-        df['datetime'] = pd.to_datetime(df['target_date']) + pd.to_timedelta(df['hour'], unit='h')
+        
+        # تبدیل تاریخ و ساعت به ساختار زمانی استاندارد
+        df['datetime'] = pd.to_datetime(df['target_date'].astype(str)) + pd.to_timedelta(df['hour'], unit='h')
+        df = df.sort_values('datetime')
         return df
     except Exception as e:
-        client.close()
-        st.error(f"خطا در اتصال به دیتابیس: {str(e)}")
         return pd.DataFrame()
 
-# هдер اصلی سایت
+# هدر اصلی داشبورد
 st.title("⚡ GridCast DE: Day-Ahead Electricity Market Forecast")
 st.markdown("Automated Machine Learning pipeline forecasting German power market conditions.")
 
-# بارگذاری داده‌ها
+# بارگذاری داده‌ها از دیتابیس
 df = load_data()
 
 if df.empty:
@@ -55,7 +54,7 @@ if df.empty:
 else:
     st.success("✅ Live data successfully synced with Turso Cloud!")
     
-    # فیلتر کردن و پیدا کردن آخرین داده معتبر (برای جلوگیری از نمایش مقادیر صفر)
+    # پیدا کردن آخرین رکورد معتبر (برای جلوگیری از نمایش صفرهای احتمالی)
     valid_df = df[df['load_mw'] > 0]
     latest_record = valid_df.iloc[-1] if not valid_df.empty else df.iloc[-1]
 
