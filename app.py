@@ -1,99 +1,89 @@
 import streamlit as st
 import pandas as pd
 import libsql_client
+import os
+from datetime import datetime
 
-# 1. Page Configuration
-st.set_page_config(page_title="GridCast DE", page_icon="⚡", layout="wide")
+# تنظیمات صفحه استریملیت
+st.set_page_config(
+    page_title="GridCast DE - German Power Market Forecast",
+    page_icon="⚡",
+    layout="wide"
+)
 
+# اتصال به دیتابیس Turso با پروتکل HTTPS
+TURSO_URL = "https://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
+raw_token = os.getenv("TURSO_AUTH_TOKEN")
+
+if not raw_token:
+    # اگر توکن در Secrets گیت‌هاب نبود، می‌توانید به صورت موقت اینجا قرار دهید یا از Secrets استریملیت بخوانید
+    TURSO_AUTH_TOKEN = st.secrets.get("TURSO_AUTH_TOKEN", "")
+else:
+    TURSO_AUTH_TOKEN = raw_token.strip().strip("'").strip('"')
+
+@st.cache_data(ttl=600)
+def load_data():
+    if not TURSO_AUTH_TOKEN:
+        return pd.DataFrame()
+    
+    client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
+    try:
+        result = client.execute("SELECT target_date, hour, load_mw, solar_mw, wind_mw, price_eur FROM daily_forecasts ORDER BY target_date DESC, hour ASC")
+        rows = result.rows
+        client.close()
+        
+        if not rows:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(rows, columns=["target_date", "hour", "load_mw", "solar_mw", "wind_mw", "price_eur"])
+        df['datetime'] = pd.to_datetime(df['target_date']) + pd.to_timedelta(df['hour'], unit='h')
+        return df
+    except Exception as e:
+        client.close()
+        st.error(f"خطا در اتصال به دیتابیس: {str(e)}")
+        return pd.DataFrame()
+
+# هдер اصلی سایت
 st.title("⚡ GridCast DE: Day-Ahead Electricity Market Forecast")
 st.markdown("Automated Machine Learning pipeline forecasting German power market conditions.")
 
-# 2. Database Connection Settings
-# Using HTTPS to bypass WebSocket/Firewall (Error 400) issues
-TURSO_URL = "https://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
+# بارگذاری داده‌ها
+df = load_data()
 
-# Fetching the token safely from Streamlit Secrets
-try:
-    raw_token = st.secrets["TURSO_AUTH_TOKEN"]
-    # Clean up the token just in case there are invisible spaces or quotes
-    TURSO_AUTH_TOKEN = raw_token.strip().strip("'").strip('"')
-except FileNotFoundError:
-    st.error("🚨 Secrets file not found. Please configure the token in Streamlit Cloud Advanced Settings.")
-    st.stop()
-except KeyError:
-    st.error("🚨 `TURSO_AUTH_TOKEN` is missing in Streamlit Secrets. Please add it via Advanced Settings.")
-    st.stop()
-
-# 3. Data Fetching Function (Cached for performance)
-@st.cache_data(ttl=3600)  # Cache data for 1 hour to reduce Turso database calls
-def load_data():
-    try:
-        # Connect to Turso Cloud
-        client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
-        
-        # Fetch the latest 7 days of forecasts (168 hours)
-        result = client.execute("SELECT * FROM daily_forecasts ORDER BY target_date DESC, hour DESC LIMIT 168")
-        
-        if not result.rows:
-            return pd.DataFrame() # Return empty DataFrame if no data exists
-
-        # Parse data into Pandas
-        columns = ["target_date", "hour", "load_mw", "solar_mw", "wind_mw", "price_eur"]
-        data = [[row[0], row[1], row[2], row[3], row[4], row[5]] for row in result.rows]
-        
-        df = pd.DataFrame(data, columns=columns)
-        
-        # Create a proper datetime index for plotting
-        df['datetime'] = pd.to_datetime(df['target_date']) + pd.to_timedelta(df['hour'], unit='h')
-        df.set_index('datetime', inplace=True)
-        df.sort_index(ascending=True, inplace=True) # Sort chronologically for line charts
-        
-        client.close()
-        return df
-
-    except Exception as e:
-        st.error(f"🚨 Connection failed: {str(e)}")
-        return None
-
-# 4. Main Dashboard UI
-with st.spinner("Fetching latest market forecasts from Turso Cloud..."):
-    df = load_data()
-
-if df is None:
-    st.warning("⚠️ Failed to load data. Please verify your Turso URL and Auth Token.")
-elif df.empty:
-    st.info("🕒 Database is connected successfully, but no forecasts are available yet. Waiting for GitHub Actions...")
+if df.empty:
+    st.warning("⚠️ هیچ داده‌ای در دیتابیس یافت نشد یا ارتباط با Turso برقرار نشد.")
 else:
     st.success("✅ Live data successfully synced with Turso Cloud!")
     
-    # KPIs / Metrics Row
+    # فیلتر کردن و پیدا کردن آخرین داده معتبر (برای جلوگیری از نمایش مقادیر صفر)
+    valid_df = df[df['load_mw'] > 0]
+    latest_record = valid_df.iloc[-1] if not valid_df.empty else df.iloc[-1]
+
+    # بخش کارت‌های نمایشی بالا (Market Overview)
     st.subheader("📊 Market Overview (Latest Forecast)")
-    latest_record = df.iloc[-1]
-    
     col1, col2, col3 = st.columns(3)
-    col1.metric("Predicted Price (EUR/MWh)", f"€ {latest_record['price_eur']:.2f}")
-    col2.metric("Grid Load (MW)", f"{latest_record['load_mw']:,.0f} MW")
-    col3.metric("Solar Generation (MW)", f"{latest_record['solar_mw']:,.0f} MW")
-
-    st.divider()
-
-    # Charts
-    st.subheader("💶 Day-Ahead Price Forecast")
-    st.line_chart(df['price_eur'], color="#ffaa00")
-
-    st.divider()
-
-    chart_col1, chart_col2 = st.columns(2)
-    with chart_col1:
-        st.subheader("🏭 Load Demand")
-        st.line_chart(df['load_mw'], color="#ff2b2b")
     
-    with chart_col2:
-        st.subheader("☀️ Solar Injection")
-        st.line_chart(df['solar_mw'], color="#00d4ff")
+    with col1:
+        st.metric(label="Predicted Price (EUR/MWh)", value=f"€ {latest_record['price_eur']:.2f}")
+    with col2:
+        st.metric(label="Grid Load (MW)", value=f"{int(latest_record['load_mw']):,} MW")
+    with col3:
+        st.metric(label="Solar Generation (MW)", value=f"{int(latest_record['solar_mw']):,} MW")
 
-    st.divider()
+    st.markdown("---")
 
-    # Data Table
-    st.subheader("📋 Raw Forecast Data")
-    st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+    # نمودار پیش‌بینی قیمت
+    st.subheader("💶 Day-Ahead Price Forecast")
+    st.line_chart(df.set_index('datetime')['price_eur'], color="#FF4B4B")
+
+    # نمودار بار شبکه
+    st.subheader("🏭 Load Demand")
+    st.line_chart(df.set_index('datetime')['load_mw'], color="#FFA421")
+
+    # نمودار تولید خورشیدی
+    st.subheader("☀️ Solar Injection")
+    st.line_chart(df.set_index('datetime')['solar_mw'], color="#00C0F2")
+
+    # جدول داده‌های خام
+    with st.expander("📋 Raw Forecast Data"):
+        st.dataframe(df)
