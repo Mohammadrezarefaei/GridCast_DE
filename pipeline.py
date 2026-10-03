@@ -1,9 +1,10 @@
+import os
 import pandas as pd
 import requests
 import xgboost as xgb
 import libsql_client
 from datetime import datetime, timedelta
-import os
+import pytz
 
 # 1. Fetch Weather Data (Tomorrow)
 print("🌤️ Fetching weather data from Open-Meteo...")
@@ -18,7 +19,11 @@ df_future = pd.DataFrame({
     "windspeed_10m": data["hourly"]["windspeed_10m"]
 })
 
-tomorrow = (datetime.now() + timedelta(days=1)).date()
+# تنظیم دقیق ساعت روی آلمان (برلین) برای جلوگیری از باگ UTC سرورهای گیت‌هاب
+berlin_tz = pytz.timezone('Europe/Berlin')
+today_berlin = datetime.now(berlin_tz).date()
+tomorrow = today_berlin + timedelta(days=1)
+
 df_tomorrow = df_future[df_future['time'].dt.date == tomorrow].copy()
 
 df_tomorrow['hour'] = df_tomorrow['time'].dt.hour
