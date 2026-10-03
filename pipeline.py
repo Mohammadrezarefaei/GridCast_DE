@@ -36,7 +36,12 @@ df_tomorrow['Solar_Gen'] = model_solar.predict(X_solar)
 
 X_price = df_tomorrow[['Load_MW', 'Solar_Gen', 'windspeed_10m', 'hour', 'dayofweek']]
 df_tomorrow['Price_EUR'] = model_price.predict(X_price)
-
+# ====== کدهای دیباگ ======
+print("🔍 DEBUG: Sample Inputs for Load Model:")
+print(X_load.head(2))
+print("\n🔍 DEBUG: Sample Outputs from Models:")
+print(df_tomorrow[['Load_MW', 'Solar_Gen', 'Price_EUR']].head(5))
+# ========================
 # 3. Batch Insert to Turso
 TURSO_URL = "https://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
 raw_token = os.getenv("TURSO_AUTH_TOKEN")
