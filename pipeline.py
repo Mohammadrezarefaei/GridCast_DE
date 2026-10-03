@@ -80,7 +80,8 @@ try:
 
     client.execute(insert_query, args_list)
     print(f"✅ Prediction for {tomorrow} successfully saved to Turso Cloud!")
-
+# اضافه کردن این خط برای بستن اتصال و پایان دادن به اسکریپت
+    client.close()
 except Exception as e:
     print(f"❌ 🚨 PYTHON ERROR: {str(e)}")
     print("🔍 Trying to fetch the hidden Turso error...")
