@@ -1,64 +1,99 @@
 import streamlit as st
 import pandas as pd
 import libsql_client
-import plotly.graph_objects as go
 
-# تنظیمات اصلی صفحه
-st.set_page_config(page_title="GridCast DE | Energy ML", layout="wide")
+# 1. Page Configuration
+st.set_page_config(page_title="GridCast DE", page_icon="⚡", layout="wide")
+
 st.title("⚡ GridCast DE: Day-Ahead Electricity Market Forecast")
 st.markdown("Automated Machine Learning pipeline forecasting German power market conditions.")
 
-@st.cache_data(ttl=3600)
-def load_data():
-    url = "libsql://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
-    
-    # روش امن برای خواندن رمز: جلوگیری از کرش کردن اپلیکیشن
-    token = st.secrets.get("TURSO_AUTH_TOKEN")
-    
-    if not token:
-        st.error("⚠️ توکن دیتابیس پیدا نشد! لطفاً در تنظیمات استریملیت (بخش Advanced Settings -> Secrets) توکن را وارد کنید.")
-        return pd.DataFrame()
+# 2. Database Connection Settings
+# Using HTTPS to bypass WebSocket/Firewall (Error 400) issues
+TURSO_URL = "https://gridcast-db-maxrefaei.aws-us-east-1.turso.io"
 
+# Fetching the token safely from Streamlit Secrets
+try:
+    raw_token = st.secrets["TURSO_AUTH_TOKEN"]
+    # Clean up the token just in case there are invisible spaces or quotes
+    TURSO_AUTH_TOKEN = raw_token.strip().strip("'").strip('"')
+except FileNotFoundError:
+    st.error("🚨 Secrets file not found. Please configure the token in Streamlit Cloud Advanced Settings.")
+    st.stop()
+except KeyError:
+    st.error("🚨 `TURSO_AUTH_TOKEN` is missing in Streamlit Secrets. Please add it via Advanced Settings.")
+    st.stop()
+
+# 3. Data Fetching Function (Cached for performance)
+@st.cache_data(ttl=3600)  # Cache data for 1 hour to reduce Turso database calls
+def load_data():
     try:
-        # اتصال به دیتابیس
-        client = libsql_client.create_client_sync(url=url, auth_token=token)
-        result = client.execute("SELECT * FROM daily_forecasts ORDER BY target_date DESC, hour ASC LIMIT 24")
+        # Connect to Turso Cloud
+        client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_AUTH_TOKEN)
+        
+        # Fetch the latest 7 days of forecasts (168 hours)
+        result = client.execute("SELECT * FROM daily_forecasts ORDER BY target_date DESC, hour DESC LIMIT 168")
         
         if not result.rows:
-            return pd.DataFrame()
-            
-        # تبدیل خروجی به دیتام‌فریم
-        df = pd.DataFrame(result.rows, columns=['id', 'target_date', 'hour', 'load_mw', 'solar_mw', 'wind_mw', 'price_eur', 'created_at'])
-        df['datetime'] = pd.to_datetime(df['target_date']) + pd.to_timedelta(df['hour'], unit='h')
-        return df
+            return pd.DataFrame() # Return empty DataFrame if no data exists
+
+        # Parse data into Pandas
+        columns = ["target_date", "hour", "load_mw", "solar_mw", "wind_mw", "price_eur"]
+        data = [[row[0], row[1], row[2], row[3], row[4], row[5]] for row in result.rows]
         
+        df = pd.DataFrame(data, columns=columns)
+        
+        # Create a proper datetime index for plotting
+        df['datetime'] = pd.to_datetime(df['target_date']) + pd.to_timedelta(df['hour'], unit='h')
+        df.set_index('datetime', inplace=True)
+        df.sort_index(ascending=True, inplace=True) # Sort chronologically for line charts
+        
+        client.close()
+        return df
+
     except Exception as e:
-        st.error(f"⚠️ اتصال به دیتابیس برقرار نشد: {e}")
-        return pd.DataFrame()
+        st.error(f"🚨 Connection failed: {str(e)}")
+        return None
 
-# فراخوانی تابع
-df = load_data()
+# 4. Main Dashboard UI
+with st.spinner("Fetching latest market forecasts from Turso Cloud..."):
+    df = load_data()
 
-# رسم نمودارها در صورت وجود دیتا
-if df.empty:
-    st.warning("داده‌ای برای نمایش وجود ندارد. منتظر اجرای پایپ‌لاین در گیت‌هاب اکشنز باشید.")
+if df is None:
+    st.warning("⚠️ Failed to load data. Please verify your Turso URL and Auth Token.")
+elif df.empty:
+    st.info("🕒 Database is connected successfully, but no forecasts are available yet. Waiting for GitHub Actions...")
 else:
-    target_date = df['target_date'].iloc[0]
-    st.subheader(f"Forecast for: **{target_date}**")
+    st.success("✅ Live data successfully synced with Turso Cloud!")
     
-    # 1. چارت قیمت
-    fig_price = go.Figure()
-    fig_price.add_trace(go.Scatter(x=df['datetime'], y=df['price_eur'], mode='lines+markers', name='Day-Ahead Price (€/MWh)', line=dict(color='firebrick', width=3)))
-    fig_price.update_layout(title="Day-Ahead Price Forecast", xaxis_title="Time", yaxis_title="€ / MWh")
-    st.plotly_chart(fig_price, use_container_width=True)
+    # KPIs / Metrics Row
+    st.subheader("📊 Market Overview (Latest Forecast)")
+    latest_record = df.iloc[-1]
     
-    # 2. چارت بار مصرفی و تولید خورشیدی
-    fig_grid = go.Figure()
-    fig_grid.add_trace(go.Scatter(x=df['datetime'], y=df['load_mw'], mode='lines', name='Load Forecast (MW)', fill='tonexty', line=dict(color='royalblue')))
-    fig_grid.add_trace(go.Scatter(x=df['datetime'], y=df['solar_mw'], mode='lines', name='Solar Gen (MW)', fill='tozeroy', line=dict(color='orange')))
-    fig_grid.update_layout(title="Load vs. Solar Generation", xaxis_title="Time", yaxis_title="MW")
-    st.plotly_chart(fig_grid, use_container_width=True)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Predicted Price (EUR/MWh)", f"€ {latest_record['price_eur']:.2f}")
+    col2.metric("Grid Load (MW)", f"{latest_record['load_mw']:,.0f} MW")
+    col3.metric("Solar Generation (MW)", f"{latest_record['solar_mw']:,.0f} MW")
 
-    # 3. جدول دیتای خام
-    with st.expander("View Raw Data"):
-        st.dataframe(df[['datetime', 'load_mw', 'solar_mw', 'price_eur']])
+    st.divider()
+
+    # Charts
+    st.subheader("💶 Day-Ahead Price Forecast")
+    st.line_chart(df['price_eur'], color="#ffaa00")
+
+    st.divider()
+
+    chart_col1, chart_col2 = st.columns(2)
+    with chart_col1:
+        st.subheader("🏭 Load Demand")
+        st.line_chart(df['load_mw'], color="#ff2b2b")
+    
+    with chart_col2:
+        st.subheader("☀️ Solar Injection")
+        st.line_chart(df['solar_mw'], color="#00d4ff")
+
+    st.divider()
+
+    # Data Table
+    st.subheader("📋 Raw Forecast Data")
+    st.dataframe(df.sort_index(ascending=False), use_container_width=True)
